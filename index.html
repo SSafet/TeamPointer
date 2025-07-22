@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Pointer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    </style>
+</head>
+<body class="bg-gray-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Global Socket.IO instance ---
+        let socket;
+
+        // --- Helper Components ---
+        const Icon = ({ name, className }) => {
+            const icons = {
+                crown: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/></svg>,
+                check: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>,
+                eye: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>,
+                trash: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
+                copy: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>,
+                plus: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+                refresh: <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2v6h6"/><path d="M21 12A9 9 0 0 0 6 5.3L3 8"/><path d="M21 22v-6h-6"/><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"/></svg>,
+                'user-off': <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user-off"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m2 2 20 20"/></svg>,
+            };
+            return <span className={className}>{icons[name]}</span>;
+        };
+        
+        // --- Main Application Component ---
+        function App() {
+            const [sessionId, setSessionId] = useState(sessionStorage.getItem('pokerSessionId'));
+            const [userName, setUserName] = useState(sessionStorage.getItem('pokerUserName'));
+            const [sessionState, setSessionState] = useState(null);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                socket = io();
+
+                // Re-join session if one exists in sessionStorage
+                if (sessionId && userName) {
+                    socket.emit('join_session', { sessionId, userName }, ({ success, message }) => {
+                        if (!success) {
+                            setError(message);
+                            handleLeaveSession(); // Clear invalid session
+                        }
+                    });
+                }
+
+                socket.on('session_updated', (newState) => {
+                    setSessionState(newState);
+                });
+                
+                socket.on('disconnect', () => {
+                    setError('Disconnected from server. Please refresh.');
+                });
+
+                return () => {
+                    socket.off('session_updated');
+                    socket.disconnect();
+                };
+            }, []);
+
+            const handleCreateSession = (name, deck) => {
+                socket.emit('create_session', { userName: name, deck }, ({ success, sessionId: newSessionId }) => {
+                    if (success) {
+                        sessionStorage.setItem('pokerSessionId', newSessionId);
+                        sessionStorage.setItem('pokerUserName', name);
+                        setSessionId(newSessionId);
+                        setUserName(name);
+                    }
+                });
+            };
+
+            const handleJoinSession = (id, name) => {
+                socket.emit('join_session', { sessionId: id, userName: name }, ({ success, message }) => {
+                    if (success) {
+                        sessionStorage.setItem('pokerSessionId', id);
+                        sessionStorage.setItem('pokerUserName', name);
+                        setSessionId(id);
+                        setUserName(name);
+                    } else {
+                        setError(message);
+                    }
+                });
+            };
+
+            const handleLeaveSession = () => {
+                sessionStorage.removeItem('pokerSessionId');
+                setSessionId(null);
+                setSessionState(null);
+                // We no longer disconnect the socket or reload the page.
+                // This prevents the error message and preserves the user's name.
+            };
+
+            if (error) {
+                return <div className="h-screen flex items-center justify-center bg-red-900 text-white text-2xl p-8">{error}</div>
+            }
+
+            return (
+                <div className="bg-gray-900 text-gray-100 min-h-screen font-sans">
+                    {sessionId && sessionState ? (
+                        <SessionScreen
+                            sessionId={sessionId}
+                            sessionState={sessionState}
+                            currentUserSocketId={socket.id}
+                            onLeave={handleLeaveSession}
+                        />
+                    ) : (
+                        <HomeScreen onCreate={handleCreateSession} onJoin={handleJoinSession} />
+                    )}
+                </div>
+            );
+        }
+
+        // --- Home Screen Component ---
+        function HomeScreen({ onCreate, onJoin }) {
+            const [name, setName] = useState(sessionStorage.getItem('pokerUserName') || '');
+            const [joinId, setJoinId] = useState('');
+            const [customDeck, setCustomDeck] = useState(
+                localStorage.getItem('teamPointerDeck') || '0, 1, 2, 3, 5, 8, 13, 21, ?, ☕'
+            );
+            const [deckError, setDeckError] = useState('');
+
+            const handleCreate = () => {
+                const deckArray = customDeck.split(',').map(s => s.trim()).filter(Boolean);
+                if (deckArray.length === 0) {
+                    setDeckError('Custom deck cannot be empty.');
+                    return;
+                }
+                if (!name.trim()) {
+                    // Although button is disabled, this is for safety.
+                    return;
+                }
+                setDeckError('');
+                localStorage.setItem('teamPointerDeck', customDeck);
+                onCreate(name, deckArray);
+            };
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4">
+                    <div className="w-full max-w-4xl text-center">
+                        <h1 className="text-5xl font-bold text-cyan-400 mb-2">Team Pointer</h1>
+                        <p className="text-gray-400 mb-8">Real-time agile estimation, simplified.</p>
+                        
+                        <div className="w-full max-w-md mx-auto mb-8">
+                            <label htmlFor="name-input" className="block text-lg font-semibold text-white mb-2">
+                                Your Name <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                                id="name-input"
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Enter your name"
+                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 text-center"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* Create Session */}
+                            <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl flex flex-col">
+                                <h2 className="text-2xl font-semibold text-white mb-4">Create a New Session</h2>
+                                <div className="space-y-4 flex-grow">
+                                    <input
+                                        type="text"
+                                        value={customDeck}
+                                        onChange={(e) => setCustomDeck(e.target.value)}
+                                        placeholder="Custom deck: 1, 2, 3, 5..."
+                                        className={`w-full px-4 py-3 bg-gray-700 border ${deckError ? 'border-red-500' : 'border-gray-600'} rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500`}
+                                    />
+                                    {deckError && <p className="text-red-400 text-sm">{deckError}</p>}
+                                    <p className="text-xs text-gray-500">Enter vote options, separated by commas.</p>
+                                </div>
+                                <button
+                                    onClick={handleCreate}
+                                    disabled={!name.trim()}
+                                    className="w-full mt-4 py-3 font-bold text-lg bg-cyan-600 hover:bg-cyan-500 rounded-lg transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed"
+                                >
+                                    Create Session
+                                </button>
+                            </div>
+                            
+                            {/* Join Session */}
+                            <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl flex flex-col">
+                                <h2 className="text-2xl font-semibold text-white mb-4">Join an Existing Session</h2>
+                                <div className="space-y-4 flex-grow">
+                                    <input
+                                        type="text"
+                                        value={joinId}
+                                        onChange={(e) => setJoinId(e.target.value)}
+                                        placeholder="Enter Session ID"
+                                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                    />
+                                </div>
+                                <button
+                                    onClick={() => onJoin(joinId, name)}
+                                    disabled={!joinId.trim() || !name.trim()}
+                                    className="w-full mt-4 py-3 font-bold text-lg bg-blue-600 hover:bg-blue-500 rounded-lg transition-all duration-300 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                                >
+                                    Join Session
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        
+        // --- Session Screen Component ---
+        function SessionScreen({ sessionId, sessionState, currentUserSocketId, onLeave }) {
+            const [newStoryTitle, setNewStoryTitle] = useState('');
+            const [newStoryLink, setNewStoryLink] = useState('');
+            const [copied, setCopied] = useState(false);
+
+            const isModerator = useMemo(() => sessionState?.moderatorId === currentUserSocketId, [sessionState, currentUserSocketId]);
+            
+            const handleVote = (vote) => socket.emit('cast_vote', { sessionId, vote });
+            const handleAddStory = () => {
+                if (!newStoryTitle.trim()) return;
+                socket.emit('add_story', { sessionId, title: newStoryTitle, link: newStoryLink });
+                setNewStoryTitle('');
+                setNewStoryLink('');
+            };
+            const handleDeleteStory = (storyId) => socket.emit('delete_story', { sessionId, storyId });
+            const handleSelectStory = (storyId) => socket.emit('select_story', { sessionId, storyId });
+            const handleRevealVotes = () => socket.emit('reveal_votes', { sessionId });
+            const handleResetVotes = () => socket.emit('reset_votes', { sessionId });
+
+            const handleCopyId = () => {
+                navigator.clipboard.writeText(sessionId).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                });
+            };
+
+            const voteAverage = useMemo(() => {
+                if (!sessionState || !sessionState.votesRevealed) return null;
+                const numericVotes = sessionState.participants
+                    .map(p => p.vote)
+                    .filter(v => v !== null && !isNaN(Number(v)))
+                    .map(v => parseFloat(v));
+                if (numericVotes.length === 0) return 'N/A';
+                const sum = numericVotes.reduce((acc, v) => acc + v, 0);
+                return (sum / numericVotes.length).toFixed(1);
+            }, [sessionState]);
+
+            const activeStory = useMemo(() => {
+                return sessionState?.stories.find(s => s.id === sessionState.activeStoryId);
+            }, [sessionState]);
+            
+            const currentUserVote = useMemo(() => {
+                return sessionState?.participants.find(p => p.id === currentUserSocketId)?.vote;
+            }, [sessionState, currentUserSocketId]);
+
+            if (!sessionState) {
+                return <div className="flex items-center justify-center h-screen bg-gray-900 text-white">Loading Session...</div>;
+            }
+            
+            return (
+                <div className="flex h-screen max-h-screen bg-gray-900 text-white">
+                    {/* Left Panel: Stories & Participants */}
+                    <div className="w-1/4 bg-gray-950 p-6 flex flex-col space-y-6 overflow-y-auto">
+                        <div className="flex-shrink-0">
+                            <h2 className="text-2xl font-bold text-cyan-400">Team Pointer</h2>
+                            <div className="mt-2 text-sm text-gray-400">
+                                <span>Session ID: </span>
+                                <button onClick={handleCopyId} className="font-mono bg-gray-800 px-2 py-1 rounded-md hover:bg-gray-700 inline-flex items-center gap-2">
+                                    {sessionId}
+                                    <Icon name={copied ? 'check' : 'copy'} className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <button onClick={onLeave} className="mt-2 text-sm text-red-500 hover:text-red-400">Leave Session</button>
+                        </div>
+
+                        {/* Stories List */}
+                        <div className="flex-grow flex flex-col min-h-0">
+                            <h3 className="text-xl font-semibold mb-3">Stories ({sessionState.stories.length})</h3>
+                            <div className="space-y-2 flex-grow overflow-y-auto pr-2">
+                                {sessionState.stories.map(story => (
+                                    <div key={story.id} 
+                                        className={`p-3 rounded-lg transition-all duration-200 flex items-center justify-between ${sessionState.activeStoryId === story.id ? 'bg-cyan-800 ring-2 ring-cyan-500' : 'bg-gray-800'} ${isModerator ? 'cursor-pointer hover:bg-gray-700' : ''}`}
+                                        onClick={() => isModerator && handleSelectStory(story.id)}>
+                                        <div className="flex flex-col">
+                                            <p className="font-medium break-all">{story.title}</p>
+                                            {story.link && <a href={story.link} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:underline break-all">Link</a>}
+                                        </div>
+                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                            {story.result && (
+                                                <span className="font-bold text-base text-cyan-400 bg-gray-700 px-2 py-1 rounded-md">
+                                                    {story.result.average}
+                                                </span>
+                                            )}
+                                            {isModerator && (
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteStory(story.id); }} className="text-gray-500 hover:text-red-500">
+                                                    <Icon name="trash" className="w-4 h-4" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {isModerator && (
+                                <div className="mt-4 space-y-2 flex-shrink-0">
+                                    <input type="text" value={newStoryTitle} onChange={e => setNewStoryTitle(e.target.value)} placeholder="New story title" className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm" />
+                                    <input type="text" value={newStoryLink} onChange={e => setNewStoryLink(e.target.value)} placeholder="Optional: Link to issue" className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm" />
+                                    <button onClick={handleAddStory} className="w-full py-2 font-bold bg-cyan-600 hover:bg-cyan-500 rounded-lg flex items-center justify-center gap-2"><Icon name="plus" className="w-5 h-5"/> Add Story</button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Center Stage & Bottom Bar */}
+                    <div className="w-3/4 flex flex-col p-4">
+                        <main className="flex-grow flex items-center justify-center">
+                            {!activeStory ? (
+                                <div className="text-center text-gray-500">
+                                    <h2 className="text-3xl font-bold">Welcome to the session!</h2>
+                                    <p className="mt-2">{isModerator ? 'Select a story from the list to begin voting.' : 'Waiting for the moderator to select a story.'}</p>
+                                </div>
+                            ) : (
+                                <div className="w-full max-w-5xl text-center flex flex-col items-center">
+                                    <div className="mb-6">
+                                        <p className="text-gray-400">Currently Voting On</p>
+                                        <h2 className="text-4xl font-bold break-words">{activeStory.title}</h2>
+                                        {activeStory.link && <a href={activeStory.link} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">View Issue</a>}
+                                    </div>
+
+                                    {(sessionState.votesRevealed || activeStory.result) && (
+                                        <div className="mb-6 p-6 bg-gray-800 rounded-2xl w-full max-w-xs">
+                                            <h3 className="text-2xl font-bold mb-2">Results</h3>
+                                            <p className="text-5xl font-bold text-cyan-400">{activeStory.result ? activeStory.result.average : voteAverage}</p>
+                                            <p className="text-gray-400">Average Score</p>
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-wrap items-center justify-center gap-4 mb-6">
+                                        {(activeStory.result ? activeStory.result.votes : sessionState.participants).map(p => (
+                                            <div key={p.id} className={`flex flex-col items-center gap-2 p-3 bg-gray-800 rounded-lg w-32 ${p.disconnected ? 'opacity-50' : ''}`}>
+                                                <div className="flex items-center gap-2">
+                                                    {p.disconnected && <Icon name="user-off" className="w-4 h-4 text-gray-400" title="Disconnected" />}
+                                                    <span className="font-medium truncate">{p.name}</span>
+                                                    {p.id === sessionState.moderatorId && <Icon name="crown" className="w-5 h-5 text-yellow-400" title="Moderator" />}
+                                                </div>
+                                                <div className={`w-16 h-10 rounded-md flex items-center justify-center font-bold text-lg transition-all duration-300 ${p.vote !== null ? 'bg-green-400 text-gray-900' : 'bg-gray-700'}`}>
+                                                    {(sessionState.votesRevealed || activeStory.result) ? p.vote : (p.vote !== null ? <Icon name="check" className="w-6 h-6"/> : '')}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    
+                                    {isModerator && (
+                                        <div className="flex flex-wrap items-center justify-center gap-4">
+                                            {!(sessionState.votesRevealed || activeStory.result) ? (
+                                                <button onClick={handleRevealVotes} className="px-6 py-3 font-bold text-lg bg-green-600 hover:bg-green-500 rounded-lg flex items-center gap-2">
+                                                    <Icon name="eye" className="w-6 h-6"/> Reveal Votes
+                                                </button>
+                                            ) : (
+                                                <button onClick={handleResetVotes} className="px-6 py-3 font-bold text-lg bg-yellow-600 hover:bg-yellow-500 rounded-lg flex items-center gap-2">
+                                                    <Icon name="refresh" className="w-6 h-6"/> New Round
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </main>
+                        
+                        {/* Bottom Bar: Voting controls */}
+                        {activeStory && (
+                            <footer className="flex-shrink-0 w-full p-4 bg-gray-950 rounded-xl">
+                                <div className="flex flex-wrap items-center justify-center gap-3">
+                                    {(sessionState.deck || []).map(vote => (
+                                        <button key={vote}
+                                            onClick={() => handleVote(vote)}
+                                            disabled={sessionState.votesRevealed || activeStory.result || currentUserVote === vote}
+                                            className={`w-16 h-20 rounded-lg text-2xl font-bold flex items-center justify-center transition-all duration-200 transform
+                                            ${currentUserVote === vote ? 'bg-cyan-500 text-white ring-4 ring-cyan-300 scale-110' : 'bg-gray-700 hover:bg-gray-600 hover:-translate-y-1'}
+                                            ${(sessionState.votesRevealed || activeStory.result) ? 'cursor-not-allowed opacity-70' : ''}`}>
+                                            {vote}
+                                        </button>
+                                    ))}
+                                </div>
+                            </footer>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html> 
