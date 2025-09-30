@@ -18,10 +18,25 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, createContext, useContext } = React;
 
-        // --- Global Socket.IO instance ---
-        let socket;
+        // --- Constants ---
+        const STORAGE_KEYS = {
+            SESSION_ID: 'pokerSessionId',
+            USER_NAME: 'pokerUserName',
+            DECK: 'teamPointerDeck',
+        };
+
+        // --- Socket.IO Context for better state management ---
+        const SocketContext = createContext();
+
+        const SocketProvider = ({ children }) => {
+            const socket = useMemo(() => io(), []);
+            useEffect(() => () => socket.disconnect(), [socket]);
+            return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
+        };
+
+        const useSocket = () => useContext(SocketContext);
 
         // --- Helper Components ---
         const Icon = ({ name, className }) => {
@@ -40,15 +55,18 @@
         
         // --- Main Application Component ---
         function App() {
-            const [sessionId, setSessionId] = useState(sessionStorage.getItem('pokerSessionId'));
-            const [userName, setUserName] = useState(sessionStorage.getItem('pokerUserName'));
+            const socket = useSocket();
+            const [sessionId, setSessionId] = useState(() => {
+                // Check URL first, then sessionStorage
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.get('session') || sessionStorage.getItem(STORAGE_KEYS.SESSION_ID);
+            });
+            const [userName, setUserName] = useState(sessionStorage.getItem(STORAGE_KEYS.USER_NAME));
             const [sessionState, setSessionState] = useState(null);
             const [error, setError] = useState('');
 
             useEffect(() => {
-                socket = io();
-
-                // Re-join session if one exists in sessionStorage
+                // Re-join session if one exists in sessionStorage or URL
                 if (sessionId && userName) {
                     socket.emit('join_session', { sessionId, userName }, ({ success, message }) => {
                         if (!success) {
@@ -61,22 +79,26 @@
                 socket.on('session_updated', (newState) => {
                     setSessionState(newState);
                 });
-                
+
                 socket.on('disconnect', () => {
                     setError('Disconnected from server. Please refresh.');
                 });
 
                 return () => {
                     socket.off('session_updated');
-                    socket.disconnect();
+                    socket.off('disconnect');
                 };
-            }, []);
+            }, [socket, sessionId, userName]);
 
             const handleCreateSession = (name, deck) => {
                 socket.emit('create_session', { userName: name, deck }, ({ success, sessionId: newSessionId }) => {
                     if (success) {
-                        sessionStorage.setItem('pokerSessionId', newSessionId);
-                        sessionStorage.setItem('pokerUserName', name);
+                        sessionStorage.setItem(STORAGE_KEYS.SESSION_ID, newSessionId);
+                        sessionStorage.setItem(STORAGE_KEYS.USER_NAME, name);
+                        // Update URL with session ID
+                        const url = new URL(window.location);
+                        url.searchParams.set('session', newSessionId);
+                        window.history.pushState({}, '', url);
                         setSessionId(newSessionId);
                         setUserName(name);
                     }
@@ -86,8 +108,12 @@
             const handleJoinSession = (id, name) => {
                 socket.emit('join_session', { sessionId: id, userName: name }, ({ success, message }) => {
                     if (success) {
-                        sessionStorage.setItem('pokerSessionId', id);
-                        sessionStorage.setItem('pokerUserName', name);
+                        sessionStorage.setItem(STORAGE_KEYS.SESSION_ID, id);
+                        sessionStorage.setItem(STORAGE_KEYS.USER_NAME, name);
+                        // Update URL with session ID
+                        const url = new URL(window.location);
+                        url.searchParams.set('session', id);
+                        window.history.pushState({}, '', url);
                         setSessionId(id);
                         setUserName(name);
                     } else {
@@ -97,7 +123,11 @@
             };
 
             const handleLeaveSession = () => {
-                sessionStorage.removeItem('pokerSessionId');
+                sessionStorage.removeItem(STORAGE_KEYS.SESSION_ID);
+                // Remove session from URL
+                const url = new URL(window.location);
+                url.searchParams.delete('session');
+                window.history.pushState({}, '', url);
                 setSessionId(null);
                 setSessionState(null);
                 // We no longer disconnect the socket or reload the page.
@@ -126,10 +156,14 @@
 
         // --- Home Screen Component ---
         function HomeScreen({ onCreate, onJoin }) {
-            const [name, setName] = useState(sessionStorage.getItem('pokerUserName') || '');
-            const [joinId, setJoinId] = useState('');
+            const [name, setName] = useState(sessionStorage.getItem(STORAGE_KEYS.USER_NAME) || '');
+            const [joinId, setJoinId] = useState(() => {
+                // Pre-fill join ID from URL if present
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.get('session') || '';
+            });
             const [customDeck, setCustomDeck] = useState(
-                localStorage.getItem('teamPointerDeck') || '0, 1, 2, 3, 5, 8, 13, 21, ?, ☕'
+                localStorage.getItem(STORAGE_KEYS.DECK) || '0, 1, 2, 3, 5, 8, 13, 21, ?, ☕'
             );
             const [deckError, setDeckError] = useState('');
 
@@ -144,7 +178,7 @@
                     return;
                 }
                 setDeckError('');
-                localStorage.setItem('teamPointerDeck', customDeck);
+                localStorage.setItem(STORAGE_KEYS.DECK, customDeck);
                 onCreate(name, deckArray);
             };
 
@@ -220,6 +254,7 @@
         
         // --- Session Screen Component ---
         function SessionScreen({ sessionId, sessionState, currentUserSocketId, onLeave }) {
+            const socket = useSocket();
             const [newStoryTitle, setNewStoryTitle] = useState('');
             const [newStoryLink, setNewStoryLink] = useState('');
             const [copied, setCopied] = useState(false);
@@ -401,7 +436,11 @@
 
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
-        root.render(<App />);
+        root.render(
+            <SocketProvider>
+                <App />
+            </SocketProvider>
+        );
     </script>
 </body>
 </html> 
